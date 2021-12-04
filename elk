@@ -1,0 +1,235 @@
+I- Luồng kết nối của ELK stack:  FIELEBEAT --> LOGSTASH --> ES --> KIBANA
+
+
+1, FILEBEAT: Là 1 deamon được cài trên server để đẩy log sang ELK, cụ thể là đẩy sang LOGSTASH.
+
+2, LOGSTASH: Là điểm nhận logs từ Filebeat, sau đó filter và đẩy dữ liệu vào ES.
+
+3, ES: là CSDL để chứa dữ liệu từ Logstash đẩy vào
+
+4, KIBANA: là điểm cuối cùng của luồng, là nơi đọc dữ liệu từ ES và view lên dashboard, visual.
+II- Cài đặt
+
+Mô hình cài đặt: Bao gồm 2 server, server 1 cài ELK, server 2 cài filebeat
+
+Các port sử dụng của các services bao gồm. ES - 9200, Lostash - 5400, KIBANA - 5601
+
+Platform sử dụng cài đặt là UBUNTU, version của ELK stack là 7.5. thực hiện cài đặt các gói theo danh sách dưới đây.
+
+1, Cài đặt ES (server1)
+
+sudo apt-get install apt-transport-https
+
+echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
+
+sudo apt-get update && sudo apt-get install elasticsearch
+
+Khởi động ES:  systemctl start elasticsearch.service
+
+
+2, Cài đặt KIBANA (server 1)
+
+sudo apt-get install apt-transport-https
+
+echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
+
+sudo apt-get update && sudo apt-get install kibana
+
+Khởi động KIBANA:  systemctl start kibana.service
+
+
+3, Cài đặt Logstash (server 1)
+
+Yêu câu: Cài đặt JAVA.
+
+
+sudo apt-get install apt-transport-https
+
+echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
+
+sudo apt-get update && sudo apt-get install logstash
+
+Khởi động Logstash:  systemctl start logstash.service
+
+
+4, Cài đặt Filebeat (server 2)
+
+Trên server muốn đẩy log sang ELK ta tải file và cài đặt Filebeat.
+
+sudo dpkg -i filebeat-7.5.1-amd64.deb
+
+III- Cấu hình
+
+1, Cấu hình ES.
+
+Trước khi cấu hình ta gần gen cert và tạo password cho các user mặc định.
+/usr/share/elasticsearch/bin/elasticsearch-certutil -out /etc/elasticsearch/elastic-certificates.p12 -pass ""
+
+ Lệnh này sẽ gen 1 cert có tên là: elastic-certificates.p12 và được đẩy vào thư mục /etc/elasticsearch
+
+Ta cần chuyển owner file cert này cho user và group elasticsearch: chown elasticsearch: /etc/elasticsearch/elastic-certificates.p12
+
+Tiếp theo sẽ tạo password cho các system users.
+/usr/share/elasticsearch/bin/elasticsearch-setup-passwords interactive/auto
+
+Sẽ có 2 lựa chọn khi tạo password: interactive hoặc auto. Interactive tức là để ta tự chọn password, auto tức là hệ thống sẽ tự sinh password cho ta.
+
+Chúng ta cần lưu các password cho các user lại.
+
+Tiếp theo ta config file cấu hình của ES: vim /etc/elasticsearch/elasticsearch.yml
+
+path.data: /var/lib/elasticsearch
+path.logs: /var/log/elasticsearch
+network.host: 0.0.0.0
+network.publish_host: localhost
+network.bind_host: localhost
+http.port: 9200
+xpack.security.enabled: true
+xpack.security.transport.ssl.enabled: true
+xpack.security.transport.ssl.verification_mode: certificate
+xpack.security.transport.ssl.keystore.path: elastic-certificates.p12
+xpack.security.transport.ssl.truststore.path: elastic-certificates.p12
+
+Đến đây ta đã cấu hình xong ES, thực hiện khởi động lại dịch vụ.
+
+
+2, Cấu hình KIBANA
+
+Với KIBANA, ta mở file cấu hình: /etc/kibana/kibana.yml và cấu hình các thông số sau đây.
+elasticsearch.hosts: ["http://localhost:9200"]	Đây là địa chỉ của ES
+elasticsearch.username: "kibana"	Đây là tên user kibana dùng để connect vào ES
+elasticsearch.password: "XXXXXXXXXX"	Đây là password của user "kibana" ta đã tạo trước đó
+
+sau khi cấu hình xong KIBANA ta khởi động lại dịch vụ.
+
+
+3, Cấu hình LOGSTASH
+
+LOGSTASH với vai trò nhận log, phân tích và đẩy log vào ES nên LOGSTASH cần có quyền được ghi dữ liệu vào ES.
+
+Ta truy cập vào KIBANA trên trình duyệt bằng địa chỉ: http://ipaddress:5601, sử dụng user elastic.
+
+Tạo 1 ROLE: logstash_writer 
+
+Tiếp theo, tạo 1 user để LOGSTASH có thể connect vào ES với roles logstash_writer.
+
+Đến đây ta đã tạo user và role tương ứng để LOGSTASH có thể dùng để ghi dữ liệu vào ES.
+
+
+Tiếp theo ta sẽ cấu hình input, filter, và output cho logstash.
+
+Trong thư mục: /etc/logstash/conf.d/ tạo các file tương ứng dưới đây
+
+02-beats-input.conf (Config input )
+
+input {
+beats {
+port => 5044
+}
+}
+
+
+10-syslog-filter.conf (Config filter)
+
+
+filter {
+if [log_type] == "mongodb" {
+grok {
+match => {"message" => "%{TIMESTAMP_ISO8601:timestamp}\s+%{MONGO3_SEVERITY:severity}\s+%{MONGO3_COMPONENT:component}\s+(?:\[%{DATA:context}\])?\s+%{GREEDYDATA:message}"}
+}
+}
+if [log_type] == "nginx" {
+grok {
+match => { "message" => "%{SYSLOGTIMESTAMP:syslog_timestamp} %{SYSLOGHOST:syslog_hostname} %{DATA:syslog_program}(?:\[%{POSINT:syslog_pid}\])?: %{GREEDYDATA:syslog_message}"}
+}
+}
+
+}
+
+
+30-elasticsearch-output.conf (Config output)
+
+output {
+elasticsearch {
+hosts => ["localhost:9200"]
+user => "logstash_internal"
+password => "xxxxx"
+manage_template => false
+index => "%{domain}-%{log_type}-%{+YYYY.MM.dd}"
+}
+}
+
+
+Với phần config filter thì ta có thể tạo nhiều file filter khác nhau, tùy thuộc vào loại log bạn muốn filter. Như trong ví dụ này thì mình đang gộp filter log mongodb và log nginx vào chung 1 file. Mọi người hoàn toàn có thể tách ra thành 2 file riêng biệt.
+
+Lưu ý 1: user, password ở phần config output là user đã tạo ở KIBANA
+
+Lưu ý 2: Các keyword: log_type, domain sẽ được giải thích thêm ở phần config filebeat.
+
+
+4, Cài đặt và cấu hình filebeat.
+
+Phần này sẽ đươc cài đặt và cấu hinh trên server 2
+
+Chạy lần lượt 2 lệnh dưới dây là ta có thể cài đặt thành công filebeat
+
+curl -L -O https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-7.5.1-amd64.deb
+
+sudo dpkg -i filebeat-7.5.1-amd64.deb
+
+Config filebeat: Config các tham số như dưới đây
+
+filebeat.inputs:
+
+- type: log
+enabled: true
+paths:
+- /var/log/mongodb/mongod.log
+fields:
+domain: eway.vn
+log_type: mongodb
+fields_under_root: true
+multiple:
+pattern: '^\['
+negate: true
+match: after
+
+output.logstash:
+# The Logstash hosts
+hosts: ["x.x.x.x:5044"]
+
+Giải thích 1 số config: 
+
+type: là loại log mà filebeat hỗ trợ.
+
+paths: đường dẫn đến filelog
+
+fields: định nghĩa thêm 1 số trường như domain, log_type, phục vụ cho việc tạo index khi logstash output ra ES(các fields này là tùy ý)
+
+Ngoài ra cần config trỏ input này đến đầu của phía Logstash để Logstash nhận input
+
+Sau khi config xong ta khởi động lại filebeat: systemctl restart filebeat
+
+
+5, Cấu hình dashboad.
+
+Sau khi cấu hình các services xong, ta vào lại KIBANA để tạo index. Index được tạo trong bài này sẽ có format kiểu: "%{domain}-%{log_type}-%{+YYYY.MM.dd}".
+
+Đây là format ta chủ ý tạo ra dựa trên config của filebeat.
+
+Trên KIBANA ta vào phần tạo index, và sẽ được suggest tên các index theo như format.
+
+Sau khi có index, ta sẽ có thể discover và tạo các filter để lọc các trường trong file log như mình mong muốn.
+
+
+6, Cấu hình SPACE 
+
+KIBANA cung cấp concept SPACE để có thể phân tách các ứng dụng khác nhau vào các space khác nhau, cũng như phân quyền để ai hoặc nhóm người nào có thể vào được space nào.
+
+Ví dụ, tạo space G3_MONGO, tạo tiếp 1 role G3_MONGO_ROLE và gán các quyền cho role này: 
+
+Như vậy ta đã tạo G3_MONGO space, role G3_MONGO_ROLE với quyền READ ở G3_MONGO space.
+
+Tiếp theo ta tạo 1 user và gán cho user này role G3_MONGO_ROLE, như vậy khi user này login vào KIBANA thì sẽ chỉ được vào G3_MONGO space.
+
+Ta có thể tạo thêm các space, role và user để phù hợp với từng tổ chức hệ thống cụ thể.
