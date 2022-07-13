@@ -1,0 +1,55 @@
+  version: '3.3'
+
+  services:
+
+    elasticsearch:
+      image: docker.elastic.co/elasticsearch/elasticsearch:7.16.3
+      ports:
+        - "9200:9200"
+        - "9300:9300"
+      volumes:
+        - ./elasticsearch/config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro,z
+        - ./elasticsearch/data:/usr/share/elasticsearch/data:z
+      environment:
+        ES_JAVA_OPTS: "-Xmx256m -Xms256m"
+        ELASTIC_PASSWORD: elastic
+        discovery.type: single-node
+      networks:
+        over8:
+
+
+    logstash:
+      image: docker.elastic.co/logstash/logstash:7.16.3
+      ports:
+        - "5044:5044"
+        - "5000:5000"
+        - "9600:9600"
+      volumes:
+        - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro,Z
+        - ./logstash/pipeline:/usr/share/logstash/pipeline:ro,Z
+      environment:
+        LS_JAVA_OPTS: "-Xmx256m -Xms256m"
+      networks:
+        over8:
+
+    kibana:
+      image: docker.elastic.co/kibana/kibana:7.16.3
+      ports:
+        - "5601:5601"
+      volumes:
+        - ./kibana/config/kibana.yml:/usr/share/kibana/config/kibana.yml:ro,Z
+      networks:
+        over8:
+    
+    filebeat:
+      image: docker.elastic.co/beats/filebeat:7.5.1 
+      volumes:
+        - /var/lib/docker/containers:/usr/share/dockerlogs/data:ro
+        - ./filebeat/filebeat.yaml:/usr/share/filebeat/filebeat.yml 
+      networks:
+        over8:
+
+
+  networks:
+    over8:
+      external: true
