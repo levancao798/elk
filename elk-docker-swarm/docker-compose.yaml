@@ -15,7 +15,7 @@
         ELASTIC_PASSWORD: elastic
         discovery.type: single-node
       networks:
-        over8:
+        logging-tier:
 
 
     logstash:
@@ -30,7 +30,7 @@
       environment:
         LS_JAVA_OPTS: "-Xmx256m -Xms256m"
       networks:
-        over8:
+        logging-tier:
 
     kibana:
       image: docker.elastic.co/kibana/kibana:7.16.3
@@ -39,7 +39,7 @@
       volumes:
         - ./kibana/config/kibana.yml:/usr/share/kibana/config/kibana.yml:ro,Z
       networks:
-        over8:
+        logging-tier:
     
     filebeat:
       image: docker.elastic.co/beats/filebeat:7.5.1 
@@ -47,9 +47,9 @@
         - /var/lib/docker/containers:/usr/share/dockerlogs/data:ro
         - ./filebeat/filebeat.yaml:/usr/share/filebeat/filebeat.yml 
       networks:
-        over8:
+        logging-tier:
 
-
+# docker network create -d overlay logging-tier
   networks:
-    over8:
+    logging-tier:
       external: true
